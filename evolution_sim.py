@@ -1,32 +1,38 @@
 import tkinter as tk
+import torch  # Use PyTorch with ROCm for GPU acceleration
 import random
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import statistics
 import sys
 
 
 class EvolutionSimulation:
     def __init__(self, master):
         self.master = master
-        self.master.title("Mass Extinction Test")
+        self.master.title("Mass Extinction Test (Optimized)")
         self.canvas = tk.Canvas(master, width=800, height=600, bg='white')
         self.canvas.pack()
 
         # Simulation parameters
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Use ROCm if available
         self.initial_population_size = 1200
         self.population_size = self.initial_population_size
         self.predator_count = 10
         self.predator_targets_per_generation = 1
         self.generation = 0
-        self.individuals = []
-        self.predators = []
         self.mutation_rate = 0.05
         self.environment_pressure = 1.8
         self.max_fitness = 1.0
         self.min_population_size = 10
         self.carrying_capacity = 50000
         self.running = False  # Flag to control simulation running
+        self.max_infection_radius = 50  # Maximum distance for disease spread
+        self.max_render_individuals = 500  # Limit number of individuals rendered on the canvas
+
+        # Population data stored as PyTorch tensors
+        self.positions = torch.zeros((self.population_size, 2), device=self.device)  # x, y positions
+        self.fitness = torch.rand(self.population_size, device=self.device) * 0.3 + 0.4  # Fitness (0.4 to 0.7)
+        self.infected = torch.zeros(self.population_size, dtype=torch.bool, device=self.device)  # Disease state (True for infected)
 
         # Data collection
         self.fitness_data = []
@@ -45,30 +51,15 @@ class EvolutionSimulation:
         self.reset_button = tk.Button(self.control_frame, text="Reset", command=self.reset_simulation)
         self.reset_button.pack(side=tk.LEFT)
 
-        # Scenario selector
-        self.scenario_label = tk.Label(self.control_frame, text="Scenario:")
-        self.scenario_label.pack(side=tk.LEFT)
-        self.scenario_var = tk.StringVar(value="stable")
-        self.scenario_menu = tk.OptionMenu(self.control_frame, self.scenario_var, "stable", "island", "environmental_change")
-        self.scenario_menu.pack(side=tk.LEFT)
-
         # Stats panel
         self.stats_frame = tk.Frame(master)
         self.stats_frame.pack()
         self.generation_label = tk.Label(self.stats_frame, text="Generation: 0")
         self.generation_label.pack(side=tk.LEFT)
-
-        # Metrics display
-        self.metrics_frame = tk.Frame(master)
-        self.metrics_frame.pack()
-        self.average_fitness_label = tk.Label(self.metrics_frame, text="Average Fitness: 0.0")
+        self.average_fitness_label = tk.Label(self.stats_frame, text="Average Fitness: 0.0")
         self.average_fitness_label.pack(side=tk.LEFT, padx=10)
-        self.population_size_label = tk.Label(self.metrics_frame, text="Population Size: 0")
+        self.population_size_label = tk.Label(self.stats_frame, text="Population Size: 0")
         self.population_size_label.pack(side=tk.LEFT, padx=10)
-        self.environment_pressure_label = tk.Label(self.metrics_frame, text="Environmental Pressure: 2.5")
-        self.environment_pressure_label.pack(side=tk.LEFT, padx=10)
-        self.fitness_stddev_label = tk.Label(self.metrics_frame, text="Fitness StdDev: 0.0")
-        self.fitness_stddev_label.pack(side=tk.LEFT, padx=10)
 
         # Fitness and population graph
         self.figure, self.ax = plt.subplots(figsize=(5, 3))
@@ -82,33 +73,20 @@ class EvolutionSimulation:
         self.master.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def create_population(self):
-        """Create initial population with genetic variation."""
-        self.individuals = []
-        for _ in range(self.population_size):
-            x, y = random.randint(50, 750), random.randint(50, 550)
-            fitness = random.uniform(0.4, 0.7)  # Moderate starting fitness
-            color = self.fitness_to_color(fitness)
-            ind = {"x": x, "y": y, "fitness": fitness, "color": color}
-            self.individuals.append(ind)
-            self.canvas.create_oval(x-5, y-5, x+5, y+5, fill=color, outline="")
+        """Initialize the population with random positions and fitness."""
+        x = torch.randint(50, 750, (self.population_size,), device=self.device)
+        y = torch.randint(50, 550, (self.population_size,), device=self.device)
+        self.positions = torch.stack((x, y), dim=-1)
+        self.fitness = torch.rand(self.population_size, device=self.device) * 0.3 + 0.4
+        self.infected = torch.zeros(self.population_size, dtype=torch.bool, device=self.device)
 
-    def create_predators(self):
-        """Create predators for the simulation."""
-        self.predators = []
-        for _ in range(self.predator_count):
-            x, y = random.randint(50, 750), random.randint(50, 550)
-            predator = {"x": x, "y": y}
-            self.predators.append(predator)
-            self.canvas.create_rectangle(x-5, y-5, x+5, y+5, fill="red", outline="")
-
-    def fitness_to_color(self, fitness):
-        """Convert fitness to a color for visualization."""
-        return "#%02x%02x%02x" % (int(fitness * 255), 0, 255 - int(fitness * 255))
+        # Start with one infected individual
+        patient_zero = random.randint(0, self.population_size - 1)
+        self.infected[patient_zero] = True
 
     def start_simulation(self):
         """Start the simulation."""
         self.running = True
-        self.scenario = self.scenario_var.get()
         self.simulate_generation()
 
     def stop_simulation(self):
@@ -122,94 +100,118 @@ class EvolutionSimulation:
 
         self.generation += 1
         self.generation_label.config(text=f"Generation: {self.generation}")
-        self.canvas.delete("all")
 
-        # Debugging: Print current population size
-        print(f"Generation {self.generation}: Current population size = {len(self.individuals)}")
+        # Apply disease spread visually
+        self.spread_disease()
 
-        # Create predators
-        self.create_predators()
+        # Remove individuals with zero fitness
+        self.remove_weak_individuals()
 
-        # Apply predation
-        for predator in self.predators:
-            for _ in range(self.predator_targets_per_generation):
-                if not self.individuals:  # Stop if the population is extinct
-                    break
-                target = random.choices(
-                    self.individuals,
-                    weights=[1 - ind["fitness"] for ind in self.individuals],  # Lower fitness = higher chance of being targeted
-                    k=1
-                )[0]
-                self.individuals.remove(target)
+        # Predators target the weakest individuals
+        self.apply_predation()
 
-        # Check for extinction
-        if not self.individuals:
-            print("Population extinct! Repopulating with random individuals...")
-            self.individuals = [
-                {
-                    "x": random.randint(50, 750),
-                    "y": random.randint(50, 550),
-                    "fitness": random.uniform(0.4, 0.7),
-                    "color": self.fitness_to_color(random.uniform(0.4, 0.7)),
-                }
-                for _ in range(self.min_population_size)
-            ]
+        # Reproduce if population is below carrying capacity
+        self.reproduce_population()
 
-        # Apply disease
-        self.apply_disease()
+        # Handle disease extinction chance
+        self.handle_disease_extinction()
 
-        # Prevent population from dropping below minimum size
-        if len(self.individuals) < self.min_population_size:
-            print(f"Warning: Population size too low ({len(self.individuals)}). Repopulating to minimum size...")
-            self.individuals += [
-                {
-                    "x": random.randint(50, 750),
-                    "y": random.randint(50, 550),
-                    "fitness": random.uniform(0.4, 0.7),
-                    "color": self.fitness_to_color(random.uniform(0.4, 0.7)),
-                }
-                for _ in range(self.min_population_size - len(self.individuals))
-            ]
+        # Update stats and render individuals
+        self.update_stats_and_render()
 
-        # Reproduce to fill population dynamically
-        survivors = self.individuals
-        new_population = []
-        while len(new_population) < len(survivors) * random.uniform(1.2, 1.5):  # Add randomness to reproduction rate
-            if len(new_population) >= self.carrying_capacity:  # Stop at carrying capacity
+        # Schedule next generation
+        if self.running and self.generation < 100000:
+            self.master.after(50, self.simulate_generation)
+
+    def spread_disease(self):
+        """Spread disease visually based on proximity and fitness."""
+        infected_indices = torch.where(self.infected)[0]
+        for idx in infected_indices:
+            x, y = self.positions[idx].tolist()
+            distances = torch.norm(self.positions.float() - torch.tensor([x, y], device=self.device).float(), dim=1)
+
+            # Limit spread to within the maximum infection radius
+            within_radius = distances < self.max_infection_radius
+            infection_chance = (1 - self.fitness) * self.environment_pressure * 0.05 / (distances + 1)
+            infection_chance[~within_radius] = 0  # No infection beyond the radius
+
+            new_infections = torch.where(torch.rand(self.positions.size(0), device=self.device) < infection_chance)[0]
+            self.infected[new_infections] = True
+
+    def remove_weak_individuals(self):
+        """Remove individuals with zero fitness."""
+        self.fitness[self.infected] -= 0.1  # Fitness penalty for infected individuals
+        self.fitness = torch.clamp(self.fitness, 0, self.max_fitness)
+        alive = self.fitness > 0
+        self.positions = self.positions[alive]
+        self.fitness = self.fitness[alive]
+        self.infected = self.infected[alive]
+
+    def apply_predation(self):
+        """Predators target the weakest individuals."""
+        for _ in range(self.predator_count):
+            if not len(self.positions):
                 break
-            parent1, parent2 = random.sample(survivors, 2)
-            child_fitness = (parent1["fitness"] + parent2["fitness"]) / 2
-            # Mutation
-            if random.uniform(0, 1) < self.mutation_rate:
-                mutation_effect = random.uniform(-0.1, 0.1)
-                child_fitness += mutation_effect
-            child_fitness = max(0, min(self.max_fitness, child_fitness))  # Cap fitness
-            x, y = random.randint(50, 750), random.randint(50, 550)
-            color = self.fitness_to_color(child_fitness)
-            new_population.append({"x": x, "y": y, "fitness": child_fitness, "color": color})
+            weakest_index = torch.argmin(self.fitness)
+            self.positions = torch.cat((self.positions[:weakest_index], self.positions[weakest_index + 1:]))
+            self.fitness = torch.cat((self.fitness[:weakest_index], self.fitness[weakest_index + 1:]))
+            self.infected = torch.cat((self.infected[:weakest_index], self.infected[weakest_index + 1:]))
 
-        # Update individuals
-        self.individuals = new_population
+    def reproduce_population(self):
+        """Reproduce individuals to maintain the population size."""
+        if len(self.fitness) < self.carrying_capacity:
+            num_offspring = len(self.fitness) * 2
+            num_offspring = min(num_offspring, self.carrying_capacity - len(self.fitness))
+            offspring_positions = self.positions[
+                torch.randint(0, len(self.positions), (num_offspring,), device=self.device)
+            ]
+            offspring_fitness = self.fitness[
+                torch.randint(0, len(self.fitness), (num_offspring,), device=self.device)
+            ] + torch.rand(num_offspring, device=self.device) * 0.2 - 0.1
+            offspring_fitness = torch.clamp(offspring_fitness, 0, self.max_fitness)
 
-        # Debugging: Check population size after reproduction
-        print(f"Generation {self.generation}: Population size after reproduction = {len(self.individuals)}")
+            # Append offspring to the population
+            self.positions = torch.cat((self.positions, offspring_positions), dim=0)
+            self.fitness = torch.cat((self.fitness, offspring_fitness), dim=0)
+            self.infected = torch.cat((self.infected, torch.zeros(num_offspring, dtype=torch.bool, device=self.device)))
 
-        # Redraw population
-        for ind in self.individuals:
-            self.canvas.create_oval(ind["x"]-5, ind["y"]-5, ind["x"]+5, ind["y"]+5, fill=ind["color"], outline="")
+    def handle_disease_extinction(self):
+        """Handle the chance for the disease to go extinct."""
+        if not self.infected.any():
+            return
+        infected_fitness = self.fitness[self.infected]
+        avg_infected_fitness = infected_fitness.mean().item()
+        if avg_infected_fitness > 0.7:  # High average fitness reduces disease survival
+            self.infected[:] = False
 
-        # Collect and plot data
-        if len(self.individuals) > 0:  # Avoid division by zero
-            avg_fitness = sum(ind["fitness"] for ind in self.individuals) / len(self.individuals)
-            fitness_stddev = statistics.stdev(ind["fitness"] for ind in self.individuals) if len(self.individuals) > 1 else 0
-        else:
-            avg_fitness = 0
-            fitness_stddev = 0
+    def update_stats_and_render(self):
+        """Update stats and render individuals."""
+        avg_fitness = self.fitness.mean().item()
+        pop_size = len(self.fitness)
+        self.average_fitness_label.config(text=f"Average Fitness: {avg_fitness:.3f}")
+        self.population_size_label.config(text=f"Population Size: {pop_size}")
 
+        # Render population (limit to max_render_individuals for performance)
+        self.canvas.delete("all")
+        render_count = min(self.max_render_individuals, len(self.positions))
+        for i in range(render_count):
+            x, y = self.positions[i].tolist()
+            if self.infected[i]:
+                color = "#FF00FF"  # Magenta for infected
+            else:
+                color = "#%02x%02x%02x" % (
+                    int(self.fitness[i].item() * 255),
+                    0,
+                    255 - int(self.fitness[i].item() * 255),
+                )
+            self.canvas.create_oval(x - 5, y - 5, x + 5, y + 5, fill=color, outline="")
+
+        # Collect data
         self.generation_data.append(self.generation)
         self.fitness_data.append(avg_fitness)
-        self.population_data.append(len(self.individuals))
+        self.population_data.append(pop_size)
 
+        # Update graph
         self.ax.clear()
         self.ax.plot(self.generation_data, self.fitness_data, label="Average Fitness", color="blue")
         self.ax.plot(self.generation_data, self.population_data, label="Population Size", color="green")
@@ -218,31 +220,6 @@ class EvolutionSimulation:
         self.ax.set_ylabel("Values")
         self.ax.legend()
         self.graph_canvas.draw()
-
-        # Schedule next generation
-        if self.running and self.generation < 100000:  # Run for 100000 generations
-            self.master.after(50, self.simulate_generation)
-
-    def apply_disease(self):
-        """Simulate disease affecting the population."""
-        infected = []
-        for individual in self.individuals:
-            # Infection chance increases with environmental pressure and lower fitness
-            infection_chance = (1 - individual["fitness"]) * self.environment_pressure * 0.1
-            if random.uniform(0, 1) < infection_chance:
-                infected.append(individual)
-
-        # Debugging: Log number of infected individuals
-        print(f"Generation {self.generation}: Infected individuals = {len(infected)}")
-
-        # Apply effects of disease
-        for individual in infected:
-            individual["fitness"] -= random.uniform(0.1, 0.3)  # Reduce fitness
-            individual["fitness"] = max(0, individual["fitness"])  # Cap fitness at 0
-            individual["color"] = "#FF00FF"  # Change color to magenta to indicate infection
-
-        # Remove individuals with zero fitness
-        self.individuals = [ind for ind in self.individuals if ind["fitness"] > 0]
 
     def reset_simulation(self):
         """Reset the simulation."""
@@ -257,7 +234,7 @@ class EvolutionSimulation:
         self.create_population()
 
     def on_close(self):
-        """Handle window close event."""
+        """Handle the window close event."""
         self.running = False
         self.master.destroy()
         sys.exit(0)
