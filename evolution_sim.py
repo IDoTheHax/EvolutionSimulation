@@ -8,22 +8,23 @@ import statistics
 class EvolutionSimulation:
     def __init__(self, master):
         self.master = master
-        self.master.title("Evolution Simulation with Predators")
+        self.master.title("More Squares Less Circles")
         self.canvas = tk.Canvas(master, width=800, height=600, bg='white')
         self.canvas.pack()
 
         # Simulation parameters
-        self.population_size = 100
-        self.predator_count = 5  # Number of predators
-        self.predator_targets_per_generation = 10  # How many individuals each predator hunts per generation
+        self.initial_population_size = 1000
+        self.population_size = self.initial_population_size - 200
+        self.predator_count = 15 
+        self.predator_targets_per_generation = 5
         self.generation = 0
         self.individuals = []
         self.predators = []
-        self.mutation_rate = 0.05
-        self.environment_pressure = 0.5
+        self.mutation_rate = 0.5
+        self.environment_pressure = 2.5
         self.max_fitness = 1.0
-        self.min_population_size = 10
-        self.carrying_capacity = 150
+        self.min_population_size = 50
+        self.carrying_capacity = 250
         self.scenario = "stable"  # Options: stable, island, environmental_change
 
         # Data collection
@@ -124,14 +125,15 @@ class EvolutionSimulation:
                 )[0]
                 self.individuals.remove(target)
 
-        # Prevent extinction
-        if len(self.individuals) < self.min_population_size:
-            self.individuals += random.choices(self.individuals, k=self.min_population_size - len(self.individuals))
+        # Prevent overpopulation
+        if len(self.individuals) > self.carrying_capacity:
+            self.individuals = random.sample(self.individuals, self.carrying_capacity)
 
-        # Reproduce to fill population
+        # Reproduce to fill population dynamically
+        survivors = self.individuals
         new_population = []
-        while len(new_population) < self.population_size and len(new_population) < self.carrying_capacity:
-            parent1, parent2 = random.sample(self.individuals, 2)
+        while len(new_population) < len(survivors) * 2 and len(new_population) < self.carrying_capacity:
+            parent1, parent2 = random.sample(survivors, 2)
             child_fitness = (parent1["fitness"] + parent2["fitness"]) / 2
             # Mutation
             if random.uniform(0, 1) < self.mutation_rate:
@@ -176,8 +178,8 @@ class EvolutionSimulation:
         self.fitness_stddev_label.config(text=f"Fitness StdDev: {fitness_stddev:.3f}")
 
         # Schedule next generation
-        if self.generation < 100:  # Run for 100 generations
-            self.master.after(500, self.simulate_generation)
+        if self.generation < 1000:  # Run for 1000 generations
+            self.master.after(50, self.simulate_generation)
 
     def reset_simulation(self):
         """Reset the simulation."""
