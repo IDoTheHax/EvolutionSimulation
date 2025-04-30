@@ -26,7 +26,7 @@ class EvolutionSimulation:
         self.min_population_size = 10
         self.carrying_capacity = 100000
         self.running = False  # Flag to control simulation running
-        self.max_infection_radius = 20  # Maximum distance for disease spread
+        self.max_infection_radius = 40  # Maximum distance for disease spread
         self.max_render_individuals = 5000  # Limit number of individuals rendered on the canvas
 
         # Population data stored as PyTorch tensors
