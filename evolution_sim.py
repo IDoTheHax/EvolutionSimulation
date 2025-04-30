@@ -9,12 +9,12 @@ import sys
 class EvolutionSimulation:
     def __init__(self, master):
         self.master = master
-        self.master.title("1000 circles vs 1 deadly disease")
+        self.master.title("Mass Extinction Test")
         self.canvas = tk.Canvas(master, width=800, height=600, bg='white')
         self.canvas.pack()
 
         # Simulation parameters
-        self.initial_population_size = 800
+        self.initial_population_size = 1200
         self.population_size = self.initial_population_size
         self.predator_count = 10
         self.predator_targets_per_generation = 1
@@ -22,10 +22,10 @@ class EvolutionSimulation:
         self.individuals = []
         self.predators = []
         self.mutation_rate = 0.05
-        self.environment_pressure = 2.5
+        self.environment_pressure = 1.8
         self.max_fitness = 1.0
         self.min_population_size = 10
-        self.carrying_capacity = 15000
+        self.carrying_capacity = 50000
         self.running = False  # Flag to control simulation running
 
         # Data collection
@@ -220,7 +220,7 @@ class EvolutionSimulation:
         self.graph_canvas.draw()
 
         # Schedule next generation
-        if self.running and self.generation < 1000:  # Run for 1000 generations
+        if self.running and self.generation < 100000:  # Run for 100000 generations
             self.master.after(50, self.simulate_generation)
 
     def apply_disease(self):
