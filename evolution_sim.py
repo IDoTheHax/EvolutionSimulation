@@ -9,7 +9,7 @@ import sys
 class EvolutionSimulation:
     def __init__(self, master):
         self.master = master
-        self.master.title("Mass Extinction Test (Optimized)")
+        self.master.title("Mass Extinction Test (Predators Spread Disease)")
         self.canvas = tk.Canvas(master, width=800, height=600, bg='white')
         self.canvas.pack()
 
@@ -24,15 +24,18 @@ class EvolutionSimulation:
         self.environment_pressure = 1.8
         self.max_fitness = 1.0
         self.min_population_size = 10
-        self.carrying_capacity = 50000
+        self.carrying_capacity = 100000
         self.running = False  # Flag to control simulation running
-        self.max_infection_radius = 50  # Maximum distance for disease spread
-        self.max_render_individuals = 500  # Limit number of individuals rendered on the canvas
+        self.max_infection_radius = 20  # Maximum distance for disease spread
+        self.max_render_individuals = 5000  # Limit number of individuals rendered on the canvas
 
         # Population data stored as PyTorch tensors
         self.positions = torch.zeros((self.population_size, 2), device=self.device)  # x, y positions
         self.fitness = torch.rand(self.population_size, device=self.device) * 0.3 + 0.4  # Fitness (0.4 to 0.7)
         self.infected = torch.zeros(self.population_size, dtype=torch.bool, device=self.device)  # Disease state (True for infected)
+
+        # Predator infection status
+        self.predator_infected = [False] * self.predator_count  # Track if predators are spreading the disease
 
         # Data collection
         self.fitness_data = []
@@ -107,7 +110,7 @@ class EvolutionSimulation:
         # Remove individuals with zero fitness
         self.remove_weak_individuals()
 
-        # Predators target the weakest individuals
+        # Predators target the weakest individuals and spread disease
         self.apply_predation()
 
         # Reproduce if population is below carrying capacity
@@ -120,7 +123,7 @@ class EvolutionSimulation:
         self.update_stats_and_render()
 
         # Schedule next generation
-        if self.running and self.generation < 100000:
+        if self.running and self.generation < 250000:
             self.master.after(50, self.simulate_generation)
 
     def spread_disease(self):
@@ -148,11 +151,23 @@ class EvolutionSimulation:
         self.infected = self.infected[alive]
 
     def apply_predation(self):
-        """Predators target the weakest individuals."""
-        for _ in range(self.predator_count):
+        """Predators target the weakest individuals and spread disease."""
+        for predator_idx in range(self.predator_count):
             if not len(self.positions):
                 break
+
+            # Target the weakest individual
             weakest_index = torch.argmin(self.fitness)
+
+            # Update predator's infection state
+            if self.infected[weakest_index]:
+                self.predator_infected[predator_idx] = True
+
+            # Spread disease if the predator is infected
+            if self.predator_infected[predator_idx]:
+                self.infected[weakest_index] = True
+
+            # Remove the individual from the population
             self.positions = torch.cat((self.positions[:weakest_index], self.positions[weakest_index + 1:]))
             self.fitness = torch.cat((self.fitness[:weakest_index], self.fitness[weakest_index + 1:]))
             self.infected = torch.cat((self.infected[:weakest_index], self.infected[weakest_index + 1:]))
