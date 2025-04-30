@@ -2,18 +2,23 @@ import tkinter as tk
 import random
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import statistics
+
 
 class EvolutionSimulation:
     def __init__(self, master):
         self.master = master
-        self.master.title("Please Work Evolution Simulation")
+        self.master.title("Evolution Simulation with Predators")
         self.canvas = tk.Canvas(master, width=800, height=600, bg='white')
         self.canvas.pack()
 
         # Simulation parameters
         self.population_size = 100
+        self.predator_count = 5  # Number of predators
+        self.predator_targets_per_generation = 10  # How many individuals each predator hunts per generation
         self.generation = 0
         self.individuals = []
+        self.predators = []
         self.mutation_rate = 0.05
         self.environment_pressure = 0.5
         self.max_fitness = 1.0
@@ -49,6 +54,18 @@ class EvolutionSimulation:
         self.generation_label = tk.Label(self.stats_frame, text="Generation: 0")
         self.generation_label.pack(side=tk.LEFT)
 
+        # Metrics display
+        self.metrics_frame = tk.Frame(master)
+        self.metrics_frame.pack()
+        self.average_fitness_label = tk.Label(self.metrics_frame, text="Average Fitness: 0.0")
+        self.average_fitness_label.pack(side=tk.LEFT, padx=10)
+        self.population_size_label = tk.Label(self.metrics_frame, text="Population Size: 0")
+        self.population_size_label.pack(side=tk.LEFT, padx=10)
+        self.environment_pressure_label = tk.Label(self.metrics_frame, text="Environmental Pressure: 0.5")
+        self.environment_pressure_label.pack(side=tk.LEFT, padx=10)
+        self.fitness_stddev_label = tk.Label(self.metrics_frame, text="Fitness StdDev: 0.0")
+        self.fitness_stddev_label.pack(side=tk.LEFT, padx=10)
+
         # Fitness and population graph
         self.figure, self.ax = plt.subplots(figsize=(5, 3))
         self.ax.set_title("Population and Fitness Trends")
@@ -68,6 +85,15 @@ class EvolutionSimulation:
             self.individuals.append(ind)
             self.canvas.create_oval(x-5, y-5, x+5, y+5, fill=color, outline="")
 
+    def create_predators(self):
+        """Create predators for the simulation."""
+        self.predators = []
+        for _ in range(self.predator_count):
+            x, y = random.randint(50, 750), random.randint(50, 550)
+            predator = {"x": x, "y": y}
+            self.predators.append(predator)
+            self.canvas.create_rectangle(x-5, y-5, x+5, y+5, fill="red", outline="")
+
     def fitness_to_color(self, fitness):
         """Convert fitness to a color for visualization."""
         return "#%02x%02x%02x" % (int(fitness * 255), 0, 255 - int(fitness * 255))
@@ -83,23 +109,29 @@ class EvolutionSimulation:
         self.generation_label.config(text=f"Generation: {self.generation}")
         self.canvas.delete("all")
 
-        # Apply natural selection
-        total_fitness = sum(ind["fitness"] for ind in self.individuals)
-        if total_fitness == 0:  # Prevent division by zero
-            total_fitness = 1
-        survivors = [
-            ind for ind in self.individuals
-            if random.uniform(0, 1) < (ind["fitness"] / total_fitness) * self.environment_pressure
-        ]
+        # Create predators
+        self.create_predators()
+
+        # Apply predation
+        for predator in self.predators:
+            for _ in range(self.predator_targets_per_generation):
+                if not self.individuals:
+                    break
+                target = random.choices(
+                    self.individuals,
+                    weights=[1 - ind["fitness"] for ind in self.individuals],  # Lower fitness = higher chance of being targeted
+                    k=1
+                )[0]
+                self.individuals.remove(target)
 
         # Prevent extinction
-        if len(survivors) < self.min_population_size:
-            survivors += random.choices(self.individuals, k=self.min_population_size - len(survivors))
+        if len(self.individuals) < self.min_population_size:
+            self.individuals += random.choices(self.individuals, k=self.min_population_size - len(self.individuals))
 
         # Reproduce to fill population
         new_population = []
         while len(new_population) < self.population_size and len(new_population) < self.carrying_capacity:
-            parent1, parent2 = random.sample(survivors, 2)
+            parent1, parent2 = random.sample(self.individuals, 2)
             child_fitness = (parent1["fitness"] + parent2["fitness"]) / 2
             # Mutation
             if random.uniform(0, 1) < self.mutation_rate:
@@ -119,6 +151,7 @@ class EvolutionSimulation:
 
         # Collect and plot data
         avg_fitness = sum(ind["fitness"] for ind in self.individuals) / len(self.individuals)
+        fitness_stddev = statistics.stdev(ind["fitness"] for ind in self.individuals) if len(self.individuals) > 1 else 0
         self.generation_data.append(self.generation)
         self.fitness_data.append(avg_fitness)
         self.population_data.append(len(self.individuals))
@@ -135,6 +168,12 @@ class EvolutionSimulation:
         # Update environmental pressure dynamically (for environmental_change scenario)
         if self.scenario == "environmental_change":
             self.environment_pressure = max(0.2, min(1.0, self.environment_pressure + random.uniform(-0.02, 0.02)))
+
+        # Update metrics display
+        self.average_fitness_label.config(text=f"Average Fitness: {avg_fitness:.3f}")
+        self.population_size_label.config(text=f"Population Size: {len(self.individuals)}")
+        self.environment_pressure_label.config(text=f"Environmental Pressure: {self.environment_pressure:.2f}")
+        self.fitness_stddev_label.config(text=f"Fitness StdDev: {fitness_stddev:.3f}")
 
         # Schedule next generation
         if self.generation < 100:  # Run for 100 generations
