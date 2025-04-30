@@ -3,6 +3,7 @@ import random
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import statistics
+import sys
 
 
 class EvolutionSimulation:
@@ -24,8 +25,8 @@ class EvolutionSimulation:
         self.environment_pressure = 2.5
         self.max_fitness = 1.0
         self.min_population_size = 10
-        self.carrying_capacity = 2500
-        self.scenario = "stable"  # Options: stable, island, environmental_change
+        self.carrying_capacity = 15000
+        self.running = False  # Flag to control simulation running
 
         # Data collection
         self.fitness_data = []
@@ -39,6 +40,8 @@ class EvolutionSimulation:
         self.control_frame.pack()
         self.start_button = tk.Button(self.control_frame, text="Start Simulation", command=self.start_simulation)
         self.start_button.pack(side=tk.LEFT)
+        self.stop_button = tk.Button(self.control_frame, text="Stop Simulation", command=self.stop_simulation)
+        self.stop_button.pack(side=tk.LEFT)
         self.reset_button = tk.Button(self.control_frame, text="Reset", command=self.reset_simulation)
         self.reset_button.pack(side=tk.LEFT)
 
@@ -75,6 +78,9 @@ class EvolutionSimulation:
         self.graph_canvas = FigureCanvasTkAgg(self.figure, master=self.stats_frame)
         self.graph_canvas.get_tk_widget().pack()
 
+        # Handle window close event
+        self.master.protocol("WM_DELETE_WINDOW", self.on_close)
+
     def create_population(self):
         """Create initial population with genetic variation."""
         self.individuals = []
@@ -100,19 +106,30 @@ class EvolutionSimulation:
         return "#%02x%02x%02x" % (int(fitness * 255), 0, 255 - int(fitness * 255))
 
     def start_simulation(self):
-        """Run the simulation."""
+        """Start the simulation."""
+        self.running = True
         self.scenario = self.scenario_var.get()
         self.simulate_generation()
 
+    def stop_simulation(self):
+        """Stop the simulation."""
+        self.running = False
+
     def simulate_generation(self):
         """Simulate one generation of evolution."""
+        if not self.running:
+            return
+
         self.generation += 1
         self.generation_label.config(text=f"Generation: {self.generation}")
         self.canvas.delete("all")
-    
+
+        # Debugging: Print current population size
+        print(f"Generation {self.generation}: Current population size = {len(self.individuals)}")
+
         # Create predators
         self.create_predators()
-    
+
         # Apply predation
         for predator in self.predators:
             for _ in range(self.predator_targets_per_generation):
@@ -124,7 +141,7 @@ class EvolutionSimulation:
                     k=1
                 )[0]
                 self.individuals.remove(target)
-    
+
         # Check for extinction
         if not self.individuals:
             print("Population extinct! Repopulating with random individuals...")
@@ -137,10 +154,10 @@ class EvolutionSimulation:
                 }
                 for _ in range(self.min_population_size)
             ]
-    
+
         # Apply disease
         self.apply_disease()
-    
+
         # Prevent population from dropping below minimum size
         if len(self.individuals) < self.min_population_size:
             print(f"Warning: Population size too low ({len(self.individuals)}). Repopulating to minimum size...")
@@ -153,11 +170,13 @@ class EvolutionSimulation:
                 }
                 for _ in range(self.min_population_size - len(self.individuals))
             ]
-    
+
         # Reproduce to fill population dynamically
         survivors = self.individuals
         new_population = []
-        while len(new_population) < len(survivors) * 2 and len(new_population) < self.carrying_capacity:
+        while len(new_population) < len(survivors) * random.uniform(1.2, 1.5):  # Add randomness to reproduction rate
+            if len(new_population) >= self.carrying_capacity:  # Stop at carrying capacity
+                break
             parent1, parent2 = random.sample(survivors, 2)
             child_fitness = (parent1["fitness"] + parent2["fitness"]) / 2
             # Mutation
@@ -168,14 +187,17 @@ class EvolutionSimulation:
             x, y = random.randint(50, 750), random.randint(50, 550)
             color = self.fitness_to_color(child_fitness)
             new_population.append({"x": x, "y": y, "fitness": child_fitness, "color": color})
-    
+
         # Update individuals
         self.individuals = new_population
-    
+
+        # Debugging: Check population size after reproduction
+        print(f"Generation {self.generation}: Population size after reproduction = {len(self.individuals)}")
+
         # Redraw population
         for ind in self.individuals:
             self.canvas.create_oval(ind["x"]-5, ind["y"]-5, ind["x"]+5, ind["y"]+5, fill=ind["color"], outline="")
-    
+
         # Collect and plot data
         if len(self.individuals) > 0:  # Avoid division by zero
             avg_fitness = sum(ind["fitness"] for ind in self.individuals) / len(self.individuals)
@@ -183,11 +205,11 @@ class EvolutionSimulation:
         else:
             avg_fitness = 0
             fitness_stddev = 0
-    
+
         self.generation_data.append(self.generation)
         self.fitness_data.append(avg_fitness)
         self.population_data.append(len(self.individuals))
-    
+
         self.ax.clear()
         self.ax.plot(self.generation_data, self.fitness_data, label="Average Fitness", color="blue")
         self.ax.plot(self.generation_data, self.population_data, label="Population Size", color="green")
@@ -196,21 +218,11 @@ class EvolutionSimulation:
         self.ax.set_ylabel("Values")
         self.ax.legend()
         self.graph_canvas.draw()
-    
-        # Update environmental pressure dynamically (for environmental_change scenario)
-        if self.scenario == "environmental_change":
-            self.environment_pressure = max(0.2, min(1.0, self.environment_pressure + random.uniform(-0.02, 0.02)))
-    
-        # Update metrics display
-        self.average_fitness_label.config(text=f"Average Fitness: {avg_fitness:.3f}")
-        self.population_size_label.config(text=f"Population Size: {len(self.individuals)}")
-        self.environment_pressure_label.config(text=f"Environmental Pressure: {self.environment_pressure:.2f}")
-        self.fitness_stddev_label.config(text=f"Fitness StdDev: {fitness_stddev:.3f}")
-    
+
         # Schedule next generation
-        if self.generation < 500:  # Run for 500 generations
-            self.master.after(300, self.simulate_generation)
-    
+        if self.running and self.generation < 1000:  # Run for 1000 generations
+            self.master.after(50, self.simulate_generation)
+
     def apply_disease(self):
         """Simulate disease affecting the population."""
         infected = []
@@ -219,22 +231,22 @@ class EvolutionSimulation:
             infection_chance = (1 - individual["fitness"]) * self.environment_pressure * 0.1
             if random.uniform(0, 1) < infection_chance:
                 infected.append(individual)
-    
+
+        # Debugging: Log number of infected individuals
+        print(f"Generation {self.generation}: Infected individuals = {len(infected)}")
+
         # Apply effects of disease
         for individual in infected:
             individual["fitness"] -= random.uniform(0.1, 0.3)  # Reduce fitness
             individual["fitness"] = max(0, individual["fitness"])  # Cap fitness at 0
             individual["color"] = "#FF00FF"  # Change color to magenta to indicate infection
-    
-        # Delay removal of individuals with zero fitness
-        self.individuals = [
-            ind
-            for ind in self.individuals
-            if ind["fitness"] > 0 or ind["color"] == "#FF00FF"  # Keep infected individuals for one more generation
-        ]
+
+        # Remove individuals with zero fitness
+        self.individuals = [ind for ind in self.individuals if ind["fitness"] > 0]
 
     def reset_simulation(self):
         """Reset the simulation."""
+        self.running = False
         self.generation = 0
         self.generation_label.config(text="Generation: 0")
         self.fitness_data = []
@@ -243,6 +255,13 @@ class EvolutionSimulation:
         self.ax.clear()
         self.graph_canvas.draw()
         self.create_population()
+
+    def on_close(self):
+        """Handle window close event."""
+        self.running = False
+        self.master.destroy()
+        sys.exit(0)
+
 
 if __name__ == "__main__":
     root = tk.Tk()
