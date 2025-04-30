@@ -8,22 +8,22 @@ import statistics
 class EvolutionSimulation:
     def __init__(self, master):
         self.master = master
-        self.master.title("More Squares Less Circles")
+        self.master.title("Dynamic Population Simulation with Extinction Handling")
         self.canvas = tk.Canvas(master, width=800, height=600, bg='white')
         self.canvas.pack()
 
         # Simulation parameters
-        self.initial_population_size = 1000
-        self.population_size = self.initial_population_size - 200
-        self.predator_count = 15 
-        self.predator_targets_per_generation = 5
+        self.initial_population_size = 800
+        self.population_size = self.initial_population_size
+        self.predator_count = 10
+        self.predator_targets_per_generation = 1
         self.generation = 0
         self.individuals = []
         self.predators = []
-        self.mutation_rate = 0.5
+        self.mutation_rate = 0.05
         self.environment_pressure = 2.5
         self.max_fitness = 1.0
-        self.min_population_size = 50
+        self.min_population_size = 10
         self.carrying_capacity = 250
         self.scenario = "stable"  # Options: stable, island, environmental_change
 
@@ -62,7 +62,7 @@ class EvolutionSimulation:
         self.average_fitness_label.pack(side=tk.LEFT, padx=10)
         self.population_size_label = tk.Label(self.metrics_frame, text="Population Size: 0")
         self.population_size_label.pack(side=tk.LEFT, padx=10)
-        self.environment_pressure_label = tk.Label(self.metrics_frame, text="Environmental Pressure: 0.5")
+        self.environment_pressure_label = tk.Label(self.metrics_frame, text="Environmental Pressure: 2.5")
         self.environment_pressure_label.pack(side=tk.LEFT, padx=10)
         self.fitness_stddev_label = tk.Label(self.metrics_frame, text="Fitness StdDev: 0.0")
         self.fitness_stddev_label.pack(side=tk.LEFT, padx=10)
@@ -109,14 +109,14 @@ class EvolutionSimulation:
         self.generation += 1
         self.generation_label.config(text=f"Generation: {self.generation}")
         self.canvas.delete("all")
-
+    
         # Create predators
         self.create_predators()
-
+    
         # Apply predation
         for predator in self.predators:
             for _ in range(self.predator_targets_per_generation):
-                if not self.individuals:
+                if not self.individuals:  # Stop if the population is extinct
                     break
                 target = random.choices(
                     self.individuals,
@@ -124,11 +124,33 @@ class EvolutionSimulation:
                     k=1
                 )[0]
                 self.individuals.remove(target)
-
-        # Prevent overpopulation
-        if len(self.individuals) > self.carrying_capacity:
-            self.individuals = random.sample(self.individuals, self.carrying_capacity)
-
+    
+        # Check for extinction
+        if not self.individuals:
+            print("Population extinct! Repopulating with random individuals...")
+            self.individuals = [
+                {
+                    "x": random.randint(50, 750),
+                    "y": random.randint(50, 550),
+                    "fitness": random.uniform(0.4, 0.7),
+                    "color": self.fitness_to_color(random.uniform(0.4, 0.7)),
+                }
+                for _ in range(self.min_population_size)
+            ]
+    
+        # Prevent population from dropping below minimum size
+        if len(self.individuals) < self.min_population_size:
+            print(f"Warning: Population size too low ({len(self.individuals)}). Repopulating to minimum size...")
+            self.individuals += [
+                {
+                    "x": random.randint(50, 750),
+                    "y": random.randint(50, 550),
+                    "fitness": random.uniform(0.4, 0.7),
+                    "color": self.fitness_to_color(random.uniform(0.4, 0.7)),
+                }
+                for _ in range(self.min_population_size - len(self.individuals))
+            ]
+    
         # Reproduce to fill population dynamically
         survivors = self.individuals
         new_population = []
@@ -143,21 +165,26 @@ class EvolutionSimulation:
             x, y = random.randint(50, 750), random.randint(50, 550)
             color = self.fitness_to_color(child_fitness)
             new_population.append({"x": x, "y": y, "fitness": child_fitness, "color": color})
-
+    
         # Update individuals
         self.individuals = new_population
-
+    
         # Redraw population
         for ind in self.individuals:
             self.canvas.create_oval(ind["x"]-5, ind["y"]-5, ind["x"]+5, ind["y"]+5, fill=ind["color"], outline="")
-
+    
         # Collect and plot data
-        avg_fitness = sum(ind["fitness"] for ind in self.individuals) / len(self.individuals)
-        fitness_stddev = statistics.stdev(ind["fitness"] for ind in self.individuals) if len(self.individuals) > 1 else 0
+        if len(self.individuals) > 0:  # Avoid division by zero
+            avg_fitness = sum(ind["fitness"] for ind in self.individuals) / len(self.individuals)
+            fitness_stddev = statistics.stdev(ind["fitness"] for ind in self.individuals) if len(self.individuals) > 1 else 0
+        else:
+            avg_fitness = 0
+            fitness_stddev = 0
+    
         self.generation_data.append(self.generation)
         self.fitness_data.append(avg_fitness)
         self.population_data.append(len(self.individuals))
-
+    
         self.ax.clear()
         self.ax.plot(self.generation_data, self.fitness_data, label="Average Fitness", color="blue")
         self.ax.plot(self.generation_data, self.population_data, label="Population Size", color="green")
@@ -166,17 +193,17 @@ class EvolutionSimulation:
         self.ax.set_ylabel("Values")
         self.ax.legend()
         self.graph_canvas.draw()
-
+    
         # Update environmental pressure dynamically (for environmental_change scenario)
         if self.scenario == "environmental_change":
             self.environment_pressure = max(0.2, min(1.0, self.environment_pressure + random.uniform(-0.02, 0.02)))
-
+    
         # Update metrics display
         self.average_fitness_label.config(text=f"Average Fitness: {avg_fitness:.3f}")
         self.population_size_label.config(text=f"Population Size: {len(self.individuals)}")
         self.environment_pressure_label.config(text=f"Environmental Pressure: {self.environment_pressure:.2f}")
         self.fitness_stddev_label.config(text=f"Fitness StdDev: {fitness_stddev:.3f}")
-
+    
         # Schedule next generation
         if self.generation < 1000:  # Run for 1000 generations
             self.master.after(50, self.simulate_generation)
