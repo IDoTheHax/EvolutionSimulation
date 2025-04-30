@@ -8,7 +8,7 @@ import statistics
 class EvolutionSimulation:
     def __init__(self, master):
         self.master = master
-        self.master.title("Dynamic Population Simulation with Extinction Handling")
+        self.master.title("1000 circles vs 1 deadly disease")
         self.canvas = tk.Canvas(master, width=800, height=600, bg='white')
         self.canvas.pack()
 
@@ -24,7 +24,7 @@ class EvolutionSimulation:
         self.environment_pressure = 2.5
         self.max_fitness = 1.0
         self.min_population_size = 10
-        self.carrying_capacity = 250
+        self.carrying_capacity = 2500
         self.scenario = "stable"  # Options: stable, island, environmental_change
 
         # Data collection
@@ -138,6 +138,9 @@ class EvolutionSimulation:
                 for _ in range(self.min_population_size)
             ]
     
+        # Apply disease
+        self.apply_disease()
+    
         # Prevent population from dropping below minimum size
         if len(self.individuals) < self.min_population_size:
             print(f"Warning: Population size too low ({len(self.individuals)}). Repopulating to minimum size...")
@@ -205,8 +208,30 @@ class EvolutionSimulation:
         self.fitness_stddev_label.config(text=f"Fitness StdDev: {fitness_stddev:.3f}")
     
         # Schedule next generation
-        if self.generation < 1000:  # Run for 1000 generations
-            self.master.after(50, self.simulate_generation)
+        if self.generation < 500:  # Run for 500 generations
+            self.master.after(300, self.simulate_generation)
+    
+    def apply_disease(self):
+        """Simulate disease affecting the population."""
+        infected = []
+        for individual in self.individuals:
+            # Infection chance increases with environmental pressure and lower fitness
+            infection_chance = (1 - individual["fitness"]) * self.environment_pressure * 0.1
+            if random.uniform(0, 1) < infection_chance:
+                infected.append(individual)
+    
+        # Apply effects of disease
+        for individual in infected:
+            individual["fitness"] -= random.uniform(0.1, 0.3)  # Reduce fitness
+            individual["fitness"] = max(0, individual["fitness"])  # Cap fitness at 0
+            individual["color"] = "#FF00FF"  # Change color to magenta to indicate infection
+    
+        # Delay removal of individuals with zero fitness
+        self.individuals = [
+            ind
+            for ind in self.individuals
+            if ind["fitness"] > 0 or ind["color"] == "#FF00FF"  # Keep infected individuals for one more generation
+        ]
 
     def reset_simulation(self):
         """Reset the simulation."""
