@@ -20,14 +20,18 @@ class EvolutionSimulation:
         self.predator_count = 10
         self.predator_targets_per_generation = 1
         self.generation = 0
-        self.mutation_rate = 0.05
-        self.environment_pressure = 1.8
+        self.mutation_rate = 0.08
+        self.environment_pressure = 2.5  # Increased from 1.8
         self.max_fitness = 1.0
         self.min_population_size = 10
-        self.carrying_capacity = 100000
+        self.carrying_capacity = 50000
         self.running = False  # Flag to control simulation running
         self.max_infection_radius = 40  # Maximum distance for disease spread
         self.max_render_individuals = 5000  # Limit number of individuals rendered on the canvas
+        self.disease_mortality = 0.4    # New parameter for disease impact
+        self.reproduction_rate = 1.2    # New parameter - lower than previous 2.0
+        self.minimum_fitness = 0.3      # New parameter for survival threshold
+        
 
         # Population data stored as PyTorch tensors
         self.positions = torch.zeros((self.population_size, 2), device=self.device)  # x, y positions
@@ -80,9 +84,13 @@ class EvolutionSimulation:
         x = torch.randint(50, 750, (self.population_size,), device=self.device)
         y = torch.randint(50, 550, (self.population_size,), device=self.device)
         self.positions = torch.stack((x, y), dim=-1)
-        self.fitness = torch.rand(self.population_size, device=self.device) * 0.3 + 0.4
+        
+        # Initialize all population attributes with the same size
+        self.fitness = torch.rand(self.population_size, device=self.device) * 0.6 + 0.2
+        self.immunity = torch.zeros(self.population_size, device=self.device)
+        self.genetic_diversity = torch.rand(self.population_size, device=self.device)
         self.infected = torch.zeros(self.population_size, dtype=torch.bool, device=self.device)
-
+        
         # Start with one infected individual
         patient_zero = random.randint(0, self.population_size - 1)
         self.infected[patient_zero] = True
@@ -127,28 +135,87 @@ class EvolutionSimulation:
             self.master.after(50, self.simulate_generation)
 
     def spread_disease(self):
-        """Spread disease visually based on proximity and fitness."""
+        """Spread disease based on population density and fitness."""
+        if not self.infected.any():
+            return
+    
+        # Ensure all tensors have the same size
+        current_size = len(self.positions)
+        self.fitness = self.fitness[:current_size]
+        self.immunity = self.immunity[:current_size]
+        self.infected = self.infected[:current_size]
+        self.genetic_diversity = self.genetic_diversity[:current_size]
+    
         infected_indices = torch.where(self.infected)[0]
+        
         for idx in infected_indices:
+            if idx >= current_size:  # Safety check
+                continue
+                
             x, y = self.positions[idx].tolist()
             distances = torch.norm(self.positions.float() - torch.tensor([x, y], device=self.device).float(), dim=1)
-
-            # Limit spread to within the maximum infection radius
+            
+            # Calculate local population density
+            local_density = torch.sum(distances < self.max_infection_radius).float() / (3.14 * self.max_infection_radius ** 2)
+            
+            # Infection chance based on density, fitness, and immunity
             within_radius = distances < self.max_infection_radius
-            infection_chance = (1 - self.fitness) * self.environment_pressure * 0.05 / (distances + 1)
-            infection_chance[~within_radius] = 0  # No infection beyond the radius
-
-            new_infections = torch.where(torch.rand(self.positions.size(0), device=self.device) < infection_chance)[0]
+            base_infection_chance = 0.1 * local_density * self.environment_pressure
+            
+            # Create infection chance tensor
+            infection_chance = torch.zeros(current_size, device=self.device)
+            valid_targets = within_radius & ~self.infected
+            
+            if valid_targets.any():
+                infection_chance[valid_targets] = (
+                    base_infection_chance *
+                    (1 - self.fitness[valid_targets]) *
+                    (1 - self.immunity[valid_targets])
+                )
+            
+            # Apply infections
+            new_infections = torch.where(torch.rand(current_size, device=self.device) < infection_chance)[0]
             self.infected[new_infections] = True
+            
+            # Increase immunity for survivors
+            self.immunity[new_infections] += 0.1
+            self.immunity.clamp_(0, 1)
 
+    
     def remove_weak_individuals(self):
-        """Remove individuals with zero fitness."""
-        self.fitness[self.infected] -= 0.1  # Fitness penalty for infected individuals
-        self.fitness = torch.clamp(self.fitness, 0, self.max_fitness)
-        alive = self.fitness > 0
-        self.positions = self.positions[alive]
-        self.fitness = self.fitness[alive]
-        self.infected = self.infected[alive]
+        """Remove individuals based on fitness and disease status."""
+        current_size = len(self.positions)
+        
+        # Ensure all tensors have the same size
+        self.fitness = self.fitness[:current_size]
+        self.immunity = self.immunity[:current_size]
+        self.infected = self.infected[:current_size]
+        self.genetic_diversity = self.genetic_diversity[:current_size]
+        
+        # Calculate survival probability
+        survival_chance = self.fitness.clone()
+        
+        # Stronger disease impact
+        infected_mask = self.infected
+        survival_chance[infected_mask] *= (1 - self.disease_mortality * (1 - self.immunity[infected_mask]))
+        
+        # Environmental pressure based on population density
+        population_pressure = current_size / self.carrying_capacity
+        survival_threshold = self.minimum_fitness + (population_pressure * 0.3)
+        
+        # Add random variation to threshold
+        random_factor = torch.rand(current_size, device=self.device) * 0.2
+        survival_threshold = torch.ones_like(survival_chance) * survival_threshold + random_factor
+        
+        # Determine survivors - stricter conditions
+        survivors = (survival_chance > survival_threshold) & (self.fitness > self.minimum_fitness)
+        
+        # Update population
+        self.positions = self.positions[survivors]
+        self.fitness = self.fitness[survivors]
+        self.infected = self.infected[survivors]
+        self.immunity = self.immunity[survivors]
+        self.genetic_diversity = self.genetic_diversity[survivors]
 
     def apply_predation(self):
         """Predators target the weakest individuals and spread disease."""
@@ -173,31 +240,73 @@ class EvolutionSimulation:
             self.infected = torch.cat((self.infected[:weakest_index], self.infected[weakest_index + 1:]))
 
     def reproduce_population(self):
-        """Reproduce individuals to maintain the population size."""
-        if len(self.fitness) < self.carrying_capacity:
-            num_offspring = len(self.fitness) * 2
-            num_offspring = min(num_offspring, self.carrying_capacity - len(self.fitness))
-            offspring_positions = self.positions[
-                torch.randint(0, len(self.positions), (num_offspring,), device=self.device)
-            ]
-            offspring_fitness = self.fitness[
-                torch.randint(0, len(self.fitness), (num_offspring,), device=self.device)
-            ] + torch.rand(num_offspring, device=self.device) * 0.2 - 0.1
-            offspring_fitness = torch.clamp(offspring_fitness, 0, self.max_fitness)
-
-            # Append offspring to the population
-            self.positions = torch.cat((self.positions, offspring_positions), dim=0)
-            self.fitness = torch.cat((self.fitness, offspring_fitness), dim=0)
-            self.infected = torch.cat((self.infected, torch.zeros(num_offspring, dtype=torch.bool, device=self.device)))
-
+        """Reproduce population with genetic inheritance."""
+        current_size = len(self.positions)
+        
+        # Calculate target population based on carrying capacity
+        target_population = self.carrying_capacity * 0.8  # Aim for 80% of carrying capacity
+        
+        if current_size < target_population:
+            # Adjust reproduction rate based on population density
+            density_factor = 1 - (current_size / self.carrying_capacity)
+            adjusted_rate = self.reproduction_rate * density_factor
+            
+            # Calculate number of offspring
+            num_offspring = min(
+                int(current_size * adjusted_rate),
+                self.carrying_capacity - current_size
+            )
+            
+            if num_offspring <= 0:
+                return
+                
+            # Select parents based on fitness
+            fitness_weights = self.fitness / self.fitness.sum()
+            parent_indices = torch.multinomial(fitness_weights, 
+                                             num_offspring, 
+                                             replacement=True)
+            
+            # Generate offspring positions
+            offspring_positions = self.positions[parent_indices]
+            
+            # Inherit fitness with mutation
+            parent_fitness = self.fitness[parent_indices]
+            mutation = torch.randn(num_offspring, device=self.device) * self.mutation_rate
+            offspring_fitness = parent_fitness + mutation
+            offspring_fitness.clamp_(0, self.max_fitness)
+            
+            # Inherit immunity with decay
+            offspring_immunity = self.immunity[parent_indices] * 0.8
+            
+            # Generate new genetic diversity
+            offspring_diversity = (self.genetic_diversity[parent_indices] + 
+                                 torch.rand(num_offspring, device=self.device)) / 2
+            
+            # Add offspring to population
+            self.positions = torch.cat((self.positions, offspring_positions))
+            self.fitness = torch.cat((self.fitness, offspring_fitness))
+            self.immunity = torch.cat((self.immunity, offspring_immunity))
+            self.genetic_diversity = torch.cat((self.genetic_diversity, offspring_diversity))
+            self.infected = torch.cat((
+                self.infected,
+                torch.zeros(num_offspring, dtype=torch.bool, device=self.device)
+            ))
+    
     def handle_disease_extinction(self):
-        """Handle the chance for the disease to go extinct."""
+        """Handle disease extinction based on population immunity."""
         if not self.infected.any():
             return
-        infected_fitness = self.fitness[self.infected]
-        avg_infected_fitness = infected_fitness.mean().item()
-        if avg_infected_fitness > 0.7:  # High average fitness reduces disease survival
+            
+        # Calculate average immunity of infected population
+        infected_immunity = self.immunity[self.infected].mean().item()
+        infected_fitness = self.fitness[self.infected].mean().item()
+        
+        # Disease extinction chance increases with immunity and fitness
+        extinction_chance = (infected_immunity * 0.5 + infected_fitness * 0.5) ** 2
+        
+        if random.random() < extinction_chance:
             self.infected[:] = False
+            print(f"Disease extinct at generation {self.generation}")
 
     def update_stats_and_render(self):
         """Update stats and render individuals."""
